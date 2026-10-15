@@ -16,6 +16,7 @@ val keystore = Properties().apply {
 android {
     namespace = "community.auroville.mantra.mixer"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
     defaultConfig {
         applicationId = "community.auroville.mantra.mixer"
         minSdk = 26

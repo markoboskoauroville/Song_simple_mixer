@@ -91,8 +91,10 @@ object Mix {
         fun process(buf: FloatArray, frames: Int) {
             for (i in 0 until frames) {
                 val peak = maxOf(abs(buf[2 * i]), abs(buf[2 * i + 1]))
-                val need = if (peak * gain > ceiling) ceiling / peak else 1f
-                gain = if (need < gain) need else gain + (1f - gain) * (1f - release)
+                // recover towards unity first, then cap: the gain applied to this sample can never let it pass
+                var g = gain + (1f - gain) * (1f - release)
+                if (peak * g > ceiling) g = ceiling / peak
+                gain = g
                 if (gain < maxReduction) maxReduction = gain
                 buf[2 * i] *= gain
                 buf[2 * i + 1] *= gain
