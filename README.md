@@ -7,6 +7,8 @@ An Android app by Mantra Productions: **one vocal, one backing track, two faders
 - **Level** each with its fader (−30 dB = off … +12 dB), a 0 dB reset and a mute. Levels and the timing nudge are
   remembered.
 - **Nudge** the vocal earlier or later in 1, 10 and 50 ms steps, so it sits on the beat.
+- **Vocal space** (0 dB = off … 6 dB, default 3): the backing steps aside, band by band, only where the vocal is
+  singing and only as far as the slider says. See below.
 - **Play / pause / seek** the live mix; faders move while it plays.
 - **Export** the mix as a 48 kHz 16-bit WAV (TPDF dither) wherever you choose. A peak limiter (ceiling −1 dBFS)
   sits on the master in playback and export alike; the export reports how hard it had to work.
@@ -14,6 +16,26 @@ An Android app by Mantra Productions: **one vocal, one backing track, two faders
 Made for the remix workflow in MANTRA_MANIFEST (`modules/remix-workflow.md`): the parts in
 `SUNO_SONGS/remixes/<song>/parts/` (a chopped solo vocal and its backing track at the same tempo) are exactly the
 two files this app takes.
+
+## Vocal space
+
+The idea of Wavesfactory *Trackspacer* and of oeksound *soothe* with its external sidechain: the vocal is the key,
+the backing is what gets carved. `Space.kt`, written for this app (no plugin code copied; the per-band sidechain
+matching follows Robbert van der Helm's GPL-3 *Spectral Compressor* in nih-plug, and MooDuck's spectral mode was
+read for comparison):
+
+- STFT 2048 points, hop 512, sqrt-Hann in and out. With the vocal silent the backing comes out unchanged
+  (error < 10⁻⁴, Test 1).
+- 1/3-octave bands from 100 Hz to 12 kHz. In each band, the vocal's power against the backing's: 15 dB under the
+  backing → nothing, level with it or louder → the full slider amount. A gate below −70 dBFS keeps breaths and
+  bleed from ducking anything. Neighbouring bands are smoothed 1-2-1 so there are no narrow notches.
+- 20 ms attack, 200 ms release; the same real gain on left and right, so the stereo image does not move.
+- Playback and export run the same code. The card shows the deepest band reduction while playing.
+
+Measured on the Scooter parts (vocal FLAC + instrumental MP3, 4:10) at 3 dB: while the vocal sings the backing dips
+−1.7 dB at 100–300 Hz, −2.5 dB at 300 Hz–1 kHz, −1.9 dB at 1–3 kHz, −0.8 dB at 6–12 kHz (medians), under −0.25 dB
+below 100 Hz, and 0.00 dB everywhere whenever the vocal is silent. At 6 dB the same pattern doubles. It runs about
+65× faster than real time on a desktop JVM.
 
 ## Build
 

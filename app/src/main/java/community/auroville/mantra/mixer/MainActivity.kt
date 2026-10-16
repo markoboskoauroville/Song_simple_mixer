@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var seek: SeekBar
     private lateinit var playBtn: Button
     private lateinit var offsetLabel: TextView
+    private lateinit var spaceLabel: TextView
+    private lateinit var spaceMeter: TextView
     private val strips = arrayOfNulls<Strip>(2)          // 0 = vocal, 1 = backing
     private var userSeeking = false
 
@@ -90,6 +92,25 @@ class MainActivity : Activity() {
         }
         nudge.addView(row)
         setOffsetMs(prefs.getInt("offsetMs", 0))
+
+        // vocal space: the backing steps aside, band by band, where the vocal sings
+        val sp = card(root)
+        sp.addView(text("VOCAL SPACE", 13f, SOFT, bold = true))
+        spaceLabel = text("", 17f, INK)
+        sp.addView(spaceLabel)
+        val spaceFader = SeekBar(this).apply {
+            max = (Space.MAX_DB * 2).toInt()                     // half-dB steps
+            progress = (prefs.getFloat("spaceDb", 3f) * 2).toInt().coerceIn(0, max)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) = setSpace(p / 2.0)
+                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStopTrackingTouch(s: SeekBar) {}
+            })
+        }
+        sp.addView(spaceFader, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)))
+        spaceMeter = text("", 14f, SOFT)
+        sp.addView(spaceMeter)
+        setSpace(spaceFader.progress / 2.0)
 
         // transport
         val tr = card(root)
@@ -198,6 +219,13 @@ class MainActivity : Activity() {
         prefs.edit().putInt("offsetMs", m).apply()
     }
 
+    private fun setSpace(db: Double) {
+        engine.spaceDb = db
+        spaceLabel.text = if (db <= 0.0) "Off — the backing plays as it is"
+            else "Backing up to −%.1f dB where the vocal sings".format(db)
+        prefs.edit().putFloat("spaceDb", db.toFloat()).apply()
+    }
+
     private fun togglePlay() {
         if (engine.playing) { engine.pause(); playBtn.text = "▶  Play"; return }
         if (engine.length == 0) { status.text = "Load at least one track first."; return }
@@ -207,6 +235,7 @@ class MainActivity : Activity() {
 
     private var shownTime = ""
     private var shownSeek = -1
+    private var shownMeter = ""
 
     // Redraw only what changed, and only fast while playing: an idle redraw every 100 ms cost 40-78 % CPU
     // in the emulator (software rendering) and is wasted battery on a phone.
@@ -218,6 +247,9 @@ class MainActivity : Activity() {
             val p = (engine.position.toLong() * 1000 / len).toInt()
             if (p != shownSeek) { seek.progress = p; shownSeek = p }
         }
+        val m = if (engine.playing && engine.spaceDb > 0) "Now: %.1f dB".format(engine.space.meterDb)
+            else "100 Hz – 12 kHz only; kick, sub and air are left alone."
+        if (m != shownMeter) { spaceMeter.text = m; shownMeter = m }
         ui.postDelayed({ tick() }, if (engine.playing) 200L else 1000L)
     }
 
