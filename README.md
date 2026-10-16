@@ -23,3 +23,18 @@ are kept). Code that does the arithmetic (`Mix.kt`) imports nothing from Android
 (`app/src/test`, Test 1); `scripts/verify.py` keeps it that way.
 
 Package `community.auroville.mantra.mixer`, minSdk 26 (Android 8), target 35. No libraries.
+
+## Opening files without the picker
+
+Share audio to **Mantra Mixer** from Files, Drive or a music app. Sharing two files at once fills both slots: a name containing *vocal*, *chops* or *acapella* goes to VOCAL and the other goes to BACKING. A single shared file goes to the slot its name suggests. If the phone has no document picker, *Load* says so instead of crashing, and *Export* saves straight into **Downloads**.
+
+## Emulator test (Pixel 7 AVD, Android 11 x86_64, 2026-10-16)
+
+The Scooter vocal (FLAC, 4:08) and the Scooter instrumental (MP3, 4:09) were loaded by share intent. Then:
+- Play advanced the clock.
+- The nudge was set to +11 ms.
+- The fader was dragged to −11 dB, then reset to 0 dB.
+- Mute toggled.
+- The mix was exported to Downloads.
+
+The exported WAV is 48 kHz/16-bit, as long as the backing, with sample peak −1.01 dBFS (the limiter ceiling). It equals an independent numpy mix of the same files with the vocal 11 ms late to within −33 dB residual; with no offset the residual is −5 dB.

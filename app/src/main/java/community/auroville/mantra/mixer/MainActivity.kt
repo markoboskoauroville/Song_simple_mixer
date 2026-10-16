@@ -1,6 +1,8 @@
 package community.auroville.mantra.mixer
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -10,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
@@ -110,6 +113,7 @@ class MainActivity : Activity() {
         status = text("Load a vocal and a backing track.", 15f, SOFT).also { it.setPadding(0, dp(14), 0, 0) }
         root.addView(status)
         tick()
+        if (savedInstanceState == null) handleShare(intent)   // not again after a rotation
     }
 
     // ---- building blocks ----------------------------------------------------------------------------------
@@ -174,6 +178,7 @@ class MainActivity : Activity() {
             val db = faderDb(s)
             s.db.text = if (db <= Mix.MIN_DB) "off" else "%+.1f dB".format(db)
             (s.mute.background as GradientDrawable).setColor(if (s.muted) 0xFF8A1C1C.toInt() else BTN)
+            s.mute.isSelected = s.muted   // readable by TalkBack, not only by colour
         }
         engine.vocalGain = if (v.muted) 0f else Mix.dbToGain(faderDb(v))
         engine.backingGain = if (b.muted) 0f else Mix.dbToGain(faderDb(b))
@@ -200,34 +205,82 @@ class MainActivity : Activity() {
         playBtn.text = "❚❚  Pause"
     }
 
+    private var shownTime = ""
+    private var shownSeek = -1
+
+    // Redraw only what changed, and only fast while playing: an idle redraw every 100 ms cost 40-78 % CPU
+    // in the emulator (software rendering) and is wasted battery on a phone.
     private fun tick() {
         val len = engine.length
-        time.text = "${Mix.clock(engine.position)} / ${Mix.clock(len)}"
-        if (!userSeeking && len > 0) seek.progress = (engine.position.toLong() * 1000 / len).toInt()
-        ui.postDelayed({ tick() }, 100)
+        val t = "${Mix.clock(engine.position)} / ${Mix.clock(len)}"
+        if (t != shownTime) { time.text = t; shownTime = t }
+        if (!userSeeking && len > 0) {
+            val p = (engine.position.toLong() * 1000 / len).toInt()
+            if (p != shownSeek) { seek.progress = p; shownSeek = p }
+        }
+        ui.postDelayed({ tick() }, if (engine.playing) 200L else 1000L)
     }
 
     // ---- files ----------------------------------------------------------------------------------------------
 
     private fun pick(code: Int) {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*"
-        }, code)
+        // Not every Android has the document picker (the emulator's test image has none): never crash on it.
+        val open = Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*" }
+        val get = Intent(Intent.ACTION_GET_CONTENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "audio/*" }
+        for (i in listOf(open, get)) {
+            try { startActivityForResult(i, code); return } catch (_: ActivityNotFoundException) {}
+        }
+        status.text = "No file picker on this phone. Share the audio files to Mantra Mixer instead."
     }
+
+    /** Files shared to the app (Drive, Files, a music app): two at once fill both slots; one goes by its name. */
+    private fun handleShare(intent: Intent?) {
+        intent ?: return
+        val uris = when (intent.action) {
+            Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            else -> emptyList()
+        }
+        if (uris.isEmpty()) return
+        val named = uris.map { it to displayName(it) }
+        val looksVocal = { n: String -> Regex("vocal|voc\\b|chops|acapella|a cappella", RegexOption.IGNORE_CASE).containsMatchIn(n) }
+        if (named.size >= 2) {
+            val v = named.firstOrNull { looksVocal(it.second) } ?: named[0]
+            val b = named.first { it !== v }
+            load(v.first, true); load(b.first, false)
+        } else {
+            load(named[0].first, looksVocal(named[0].second))
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); handleShare(intent) }
 
     private fun startExport() {
         if (engine.length == 0) { status.text = "Nothing to export yet."; return }
         engine.pause(); playBtn.text = "▶  Play"
         val base = (engine.vocal?.name ?: engine.backing?.name ?: "mix").substringBeforeLast('.')
-        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE); type = "audio/wav"; putExtra(Intent.EXTRA_TITLE, "${base}_mix.wav")
-        }, EXPORT)
+        val name = "${base}_mix.wav"
+        try {
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "audio/wav"; putExtra(Intent.EXTRA_TITLE, name)
+            }, EXPORT)
+        } catch (_: ActivityNotFoundException) {
+            // No picker: straight into Downloads (Android 10+, no permission needed).
+            if (Build.VERSION.SDK_INT >= 29) {
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name); put(MediaStore.MediaColumns.MIME_TYPE, "audio/wav")
+                })
+                if (uri != null) export(uri) else status.text = "Could not create $name in Downloads."
+            } else status.text = "No file picker on this phone to save the mix."
+        }
     }
 
-    private fun displayName(uri: Uri): String =
+    private fun displayName(uri: Uri): String = runCatching {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
             if (it.moveToFirst()) it.getString(0) else null
-        } ?: uri.lastPathSegment ?: "track"
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "track"
 
     @Deprecated("Activity result API without AndroidX")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -247,7 +300,11 @@ class MainActivity : Activity() {
         status.text = "Reading $name …"
         thread(name = "decode") {
             try {
-                val t = Decoder.decode(this, uri, name) { p -> ui.post { status.text = "Reading $name … ${(p * 100).toInt()} %" } }
+                var shown = -1   // one UI update per percent, not one per compressed frame
+                val t = Decoder.decode(this, uri, name) { p ->
+                    val pc = (p * 100).toInt()
+                    if (pc != shown) { shown = pc; ui.post { status.text = "Reading $name … $pc %" } }
+                }
                 if (isVocal) engine.vocal = t else engine.backing = t
                 ui.post {
                     strip.name.text = "$name · ${Mix.clock(t.frames)} · ${t.sourceRate / 1000.0} kHz"
@@ -264,7 +321,11 @@ class MainActivity : Activity() {
         thread(name = "export") {
             try {
                 val red = contentResolver.openOutputStream(uri)!!.use { out ->
-                    engine.export(out.buffered(1 shl 16)) { p -> ui.post { status.text = "Exporting … ${(p * 100).toInt()} %" } }
+                    var shown = -1
+                    engine.export(out.buffered(1 shl 16)) { p ->
+                        val pc = (p * 100).toInt()
+                        if (pc != shown) { shown = pc; ui.post { status.text = "Exporting … $pc %" } }
+                    }
                 }
                 val note = if (red < -0.1) " The limiter pulled peaks down by up to %.1f dB — lower a fader if that is too much.".format(-red) else ""
                 ui.post { status.text = "Exported ${displayName(uri)} (48 kHz, 16-bit WAV).$note" }
