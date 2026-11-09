@@ -1,3 +1,7 @@
+
+
+## From the former README (9.11.2026)
+
 # Song simple mixer
 
 An Android app by Mantra Productions: **one vocal, one backing track, two faders, export the mix.**
